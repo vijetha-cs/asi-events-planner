@@ -1,5 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import OrganizerDashboard from "./OrganizerDashboard";
+import {
+  deleteWordPressEvent,
+  getMyWordPressRegistrations,
+  getWordPressEvents,
+  getWordPressSession,
+  isWordPressConfigured,
+  saveWordPressEvent,
+  setWordPressRegistration,
+} from "./lib/wpApi";
 
 const ASI_EVENTS_URL =
   "https://www.asicsulb.org/corporate/discover/sustain-u/upcoming-workshops";
@@ -16,6 +25,7 @@ const EVENTS = [
     id: "trash-talkers-nov30",
     title: "Trash Talkers Tabling",
     category: "Sustainability",
+    date: "2026-11-30",
     dateLabel: "NOV 30",
     dateText: "Monday, November 30, 2026",
     time: "11:00 AM – 12:00 PM",
@@ -35,6 +45,7 @@ const EVENTS = [
     id: "farmers-market",
     title: "Farmers Market Tabling",
     category: "Sustainability",
+    date: "2026-12-01",
     dateLabel: "DEC 01",
     dateText: "Tuesday, December 1, 2026",
     time: "11:00 AM – 2:00 PM",
@@ -53,6 +64,7 @@ const EVENTS = [
     id: "outreach-session-1",
     title: "Outreach Meeting Session 1",
     category: "Sustainability",
+    date: "2026-12-02",
     dateLabel: "DEC 02",
     dateText: "Wednesday, December 2, 2026",
     time: "10:00 AM – 11:00 AM",
@@ -72,6 +84,7 @@ const EVENTS = [
     id: "outreach-session-2",
     title: "Outreach Meeting Session 2",
     category: "Sustainability",
+    date: "2026-12-02",
     dateLabel: "DEC 02",
     dateText: "Wednesday, December 2, 2026",
     time: "2:00 PM – 3:00 PM",
@@ -91,6 +104,7 @@ const EVENTS = [
     id: "farmers-market-dec8",
     title: "Farmers Market Tabling",
     category: "Sustainability",
+    date: "2026-12-08",
     dateLabel: "DEC 08",
     dateText: "Tuesday, December 8, 2026",
     time: "11:00 AM – 2:00 PM",
@@ -109,6 +123,7 @@ const EVENTS = [
     id: "huts-for-hummers",
     title: "Collaboration #4: Huts for Hummers with BPE",
     category: "Sustainability",
+    date: "2026-12-08",
     dateLabel: "DEC 08",
     dateText: "Tuesday, December 8, 2026",
     time: "12:00 PM – 3:00 PM",
@@ -125,15 +140,6 @@ const EVENTS = [
   },
 ];
 
-const CATEGORIES = [
-  "All events",
-  "Community",
-  "Sustainability",
-  "Wellness",
-  "Creative",
-  "Workshop",
-];
-
 function loadFromStorage(key) {
   try {
     return JSON.parse(localStorage.getItem(key) || "[]");
@@ -146,35 +152,79 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All events");
   const [month, setMonth] = useState("All dates");
+  const [location, setLocation] = useState("All locations");
   const [view, setView] = useState("explore");
   const [savedIds, setSavedIds] = useState(() =>
     loadFromStorage("beach-life-saved-events"),
   );
   const [registeredIds, setRegisteredIds] = useState(() =>
-    loadFromStorage("beach-life-registered-events"),
+    isWordPressConfigured ? [] : loadFromStorage("beach-life-registered-events"),
   );
   const [organizerEvents, setOrganizerEvents] = useState(() =>
     loadFromStorage("beach-life-organizer-events"),
   );
   const [selectedEvent, setSelectedEvent] = useState(null);
+  const [wpEvents, setWpEvents] = useState(null);
+  const [wpSession, setWpSession] = useState(null);
+  const [appNotice, setAppNotice] = useState("");
+  const dialogRef = useRef(null);
 
   const events = useMemo(
-    () => [
-      ...EVENTS,
-      ...organizerEvents.filter((event) => event.status === "published"),
-    ],
-    [organizerEvents],
+    () =>
+      isWordPressConfigured
+        ? wpEvents || []
+        : [
+            ...EVENTS,
+            ...organizerEvents.filter((event) => event.status === "published"),
+          ],
+    [organizerEvents, wpEvents],
   );
+
+  useEffect(() => {
+    if (!isWordPressConfigured) return undefined;
+    let active = true;
+
+    async function loadWordPressData() {
+      try {
+        const [session, remoteEvents] = await Promise.all([
+          getWordPressSession(),
+          getWordPressEvents(),
+        ]);
+        if (!active) return;
+        setWpSession(session);
+        setWpEvents(remoteEvents);
+        if (session.loggedIn) {
+          const ids = await getMyWordPressRegistrations(session.nonce);
+          if (active) setRegisteredIds(ids);
+        } else {
+          setRegisteredIds([]);
+        }
+      } catch (error) {
+        if (active) setAppNotice(`WordPress API: ${error.message}`);
+      }
+    }
+
+    loadWordPressData();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const wpLoginHref = wpSession?.loginUrl
+    ? `${wpSession.loginUrl}?redirect_to=${encodeURIComponent(window.location.href)}`
+    : null;
 
   useEffect(() => {
     localStorage.setItem("beach-life-saved-events", JSON.stringify(savedIds));
   }, [savedIds]);
 
   useEffect(() => {
-    localStorage.setItem(
-      "beach-life-registered-events",
-      JSON.stringify(registeredIds),
-    );
+    if (!isWordPressConfigured) {
+      localStorage.setItem(
+        "beach-life-registered-events",
+        JSON.stringify(registeredIds),
+      );
+    }
   }, [registeredIds]);
 
   useEffect(() => {
@@ -187,13 +237,59 @@ export default function App() {
   useEffect(() => {
     if (!selectedEvent) return;
 
-    function closeOnEscape(event) {
-      if (event.key === "Escape") setSelectedEvent(null);
+    const previouslyFocused = document.activeElement;
+    requestAnimationFrame(() => {
+      dialogRef.current?.querySelector("button")?.focus();
+    });
+
+    function handleDialogKeys(event) {
+      if (event.key === "Escape") {
+        setSelectedEvent(null);
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = dialogRef.current.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+      );
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
     }
 
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    window.addEventListener("keydown", handleDialogKeys);
+    return () => {
+      window.removeEventListener("keydown", handleDialogKeys);
+      previouslyFocused?.focus?.();
+    };
   }, [selectedEvent]);
+
+  const availableCategories = useMemo(
+    () => ["All events", ...new Set(events.map((event) => event.category).filter(Boolean))],
+    [events],
+  );
+  const availableLocations = useMemo(
+    () => ["All locations", ...new Set(events.map((event) => event.location).filter(Boolean))],
+    [events],
+  );
+  const availableMonths = useMemo(() => {
+    const months = new Map();
+    events.forEach((event) => {
+      if (!event.date) return;
+      const key = event.date.slice(0, 7);
+      const label = new Date(`${event.date}T12:00:00`).toLocaleDateString("en-US", {
+        month: "long",
+        year: "numeric",
+      });
+      months.set(key, label);
+    });
+    return [...months.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [events]);
 
   const visibleEvents = useMemo(() => {
     return events.filter((event) => {
@@ -202,15 +298,15 @@ export default function App() {
       const matchesView = view === "explore" || isInMyEvents;
       const matchesCategory =
         category === "All events" || event.category === category;
-      const matchesMonth =
-        month === "All dates" || event.dateLabel.startsWith(month);
+      const matchesMonth = month === "All dates" || event.date?.startsWith(month);
+      const matchesLocation = location === "All locations" || event.location === location;
       const searchText =
         `${event.title} ${event.category} ${event.location}`.toLowerCase();
       const matchesQuery = searchText.includes(query.toLowerCase());
 
-      return matchesView && matchesCategory && matchesMonth && matchesQuery;
+      return matchesView && matchesCategory && matchesMonth && matchesLocation && matchesQuery;
     });
-  }, [category, events, month, query, registeredIds, savedIds, view]);
+  }, [category, events, location, month, query, registeredIds, savedIds, view]);
 
   function toggleSaved(id) {
     setSavedIds((current) =>
@@ -220,15 +316,41 @@ export default function App() {
     );
   }
 
-  function toggleRegistration(id) {
-    setRegisteredIds((current) =>
-      current.includes(id)
-        ? current.filter((registeredId) => registeredId !== id)
-        : [...current, id],
-    );
+  async function toggleRegistration(id) {
+    const isRegistered = registeredIds.includes(id);
+    try {
+      if (isWordPressConfigured) {
+        if (!wpSession?.loggedIn) {
+          setAppNotice("Sign in to your WordPress student account to register for events.");
+          return;
+        }
+        await setWordPressRegistration(id, !isRegistered, wpSession.nonce);
+        setRegisteredIds((current) =>
+          isRegistered ? current.filter((registeredId) => registeredId !== id) : [...current, id],
+        );
+        setAppNotice(isRegistered ? "Your registration was cancelled." : "You are registered for this event.");
+      } else {
+        setRegisteredIds((current) =>
+          isRegistered ? current.filter((registeredId) => registeredId !== id) : [...current, id],
+        );
+      }
+    } catch (error) {
+      setAppNotice(error.message);
+    }
   }
 
-  function saveOrganizerEvent(event) {
+  async function saveOrganizerEvent(event) {
+    if (isWordPressConfigured) {
+      if (!wpSession?.canManageEvents) throw new Error("Sign in with an ASI Event Organizer WordPress account to manage events.");
+      const saved = await saveWordPressEvent(event, wpSession.nonce);
+      setWpEvents((current) => {
+        const existing = (current || []).some((item) => item.id === saved.id);
+        return existing
+          ? current.map((item) => (item.id === saved.id ? saved : item))
+          : [...(current || []), saved];
+      });
+      return;
+    }
     setOrganizerEvents((current) => {
       if (event.id) {
         return current.map((item) =>
@@ -240,11 +362,27 @@ export default function App() {
     });
   }
 
-  function deleteOrganizerEvent(id) {
+  async function deleteOrganizerEvent(id) {
+    if (isWordPressConfigured) {
+      if (!wpSession?.canManageEvents) throw new Error("Organizer access is required to delete events.");
+      await deleteWordPressEvent(id, wpSession.nonce);
+      setWpEvents((current) => current.filter((event) => event.id !== id));
+      return;
+    }
     setOrganizerEvents((current) => current.filter((event) => event.id !== id));
   }
 
-  function toggleOrganizerStatus(id) {
+  async function toggleOrganizerStatus(id) {
+    if (isWordPressConfigured) {
+      const event = (wpEvents || []).find((item) => item.id === id);
+      if (!event || !wpSession?.canManageEvents) throw new Error("Organizer access is required to change event status.");
+      const saved = await saveWordPressEvent(
+        { ...event, status: event.status === "published" ? "draft" : "published" },
+        wpSession.nonce,
+      );
+      setWpEvents((current) => current.map((item) => (item.id === id ? saved : item)));
+      return;
+    }
     setOrganizerEvents((current) =>
       current.map((event) =>
         event.id === id
@@ -260,11 +398,14 @@ export default function App() {
   if (view === "organizer") {
     return (
       <OrganizerDashboard
-        events={organizerEvents}
+        events={isWordPressConfigured ? wpEvents || [] : organizerEvents}
         onBack={() => setView("explore")}
         onSave={saveOrganizerEvent}
         onDelete={deleteOrganizerEvent}
         onToggleStatus={toggleOrganizerStatus}
+        apiMode={isWordPressConfigured}
+        canManageEvents={!isWordPressConfigured || Boolean(wpSession?.canManageEvents)}
+        loginUrl={wpLoginHref}
       />
     );
   }
@@ -273,6 +414,12 @@ export default function App() {
 
   return (
     <main className="min-h-screen bg-[#f7f5ef] text-[#142f43]">
+      <a
+        href="#events"
+        className="sr-only z-[100] rounded-lg bg-white px-4 py-3 font-bold text-[#142f43] focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
+      >
+        Skip to events
+      </a>
       <header className="border-b border-[#e5e1d7] bg-[#f7f5ef]/95">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-5 sm:px-8">
           <a
@@ -281,7 +428,7 @@ export default function App() {
             aria-label="Beach Life events home"
           >
             <span className="block text-xl font-black tracking-tight">
-              beach<span className="text-[#e5aa27]">life</span>
+              beach<span className="text-[#895d00]">life</span>
             </span>
             <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
               student events
@@ -291,6 +438,7 @@ export default function App() {
           <nav aria-label="Main navigation" className="flex items-center gap-2">
             <button
               onClick={() => setView("explore")}
+              aria-pressed={view === "explore"}
               className={`rounded-full px-4 py-2 text-sm font-semibold ${
                 view === "explore"
                   ? "bg-[#142f43] text-white"
@@ -301,6 +449,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setView("saved")}
+              aria-pressed={view === "saved"}
               className={`rounded-full px-4 py-2 text-sm font-semibold ${
                 view === "saved"
                   ? "bg-[#142f43] text-white"
@@ -318,9 +467,31 @@ export default function App() {
             >
               Organizer
             </button>
+            {isWordPressConfigured && !wpSession?.loggedIn && wpLoginHref && (
+              <a
+                href={wpLoginHref}
+                className="rounded-full border border-[#142f43] px-4 py-2 text-sm font-semibold text-[#142f43] hover:bg-white"
+              >
+                WordPress sign in
+              </a>
+            )}
           </nav>
         </div>
       </header>
+
+      {appNotice && (
+        <div role="status" aria-live="polite" className="mx-auto mt-4 max-w-7xl px-5 text-sm text-[#17665f] sm:px-8">
+          {appNotice}
+          {isWordPressConfigured && !wpSession?.loggedIn && wpLoginHref && (
+            <a
+              className="ml-2 font-bold underline"
+              href={wpLoginHref}
+            >
+              Sign in
+            </a>
+          )}
+        </div>
+      )}
 
       <section className="mx-auto max-w-7xl px-5 pb-10 pt-8 sm:px-8 sm:pt-12">
         <div className="relative overflow-hidden rounded-[2rem] bg-[#173b53] px-7 py-10 text-white sm:px-12 sm:py-14">
@@ -360,7 +531,7 @@ export default function App() {
       <section id="events" className="mx-auto max-w-7xl px-5 pb-20 sm:px-8">
         <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#25877f]">
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#17665f]">
               The Beach calendar
             </p>
             <h2 className="mt-2 text-3xl font-black tracking-tight">
@@ -373,7 +544,7 @@ export default function App() {
           </p>
         </div>
 
-        <div className="mb-6 grid gap-3 sm:grid-cols-[1fr_190px]">
+        <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_190px_210px]">
           <label className="sr-only" htmlFor="event-search">
             Search events
           </label>
@@ -396,16 +567,30 @@ export default function App() {
             className="rounded-2xl border border-[#deded7] bg-white px-4 py-3.5 text-sm outline-none focus:border-[#25877f] focus:ring-4 focus:ring-[#25877f]/10"
           >
             <option>All dates</option>
-            <option value="NOV">November 2026</option>
-            <option value="DEC">December 2026</option>
+            {availableMonths.map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+
+          <label className="sr-only" htmlFor="event-location">Filter by location</label>
+          <select
+            id="event-location"
+            value={location}
+            onChange={(event) => setLocation(event.target.value)}
+            className="rounded-2xl border border-[#deded7] bg-white px-4 py-3.5 text-sm outline-none focus:border-[#25877f] focus:ring-4 focus:ring-[#25877f]/10"
+          >
+            {availableLocations.map((item) => (
+              <option key={item}>{item}</option>
+            ))}
           </select>
         </div>
 
         <div
           className="mb-8 flex gap-2 overflow-x-auto pb-2"
+          role="group"
           aria-label="Filter by category"
         >
-          {CATEGORIES.map((item) => (
+          {availableCategories.map((item) => (
             <button
               key={item}
               onClick={() => setCategory(item)}
@@ -445,8 +630,9 @@ export default function App() {
                     {event.imageUrl && (
                       <img
                         src={event.imageUrl}
-                        alt={event.imageAlt}
+                        alt={event.imageAlt || ""}
                         loading="lazy"
+                        decoding="async"
                         className="h-full w-full object-cover"
                         onError={(imageEvent) => {
                           imageEvent.currentTarget.style.display = "none";
@@ -468,7 +654,7 @@ export default function App() {
                     <span className="absolute bottom-3 left-4 rounded-full bg-black/30 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-white">
                       {event.source}
                     </span>
-                    {event.imageUrl && (
+                    {event.imageUrl && event.source !== "WordPress API" && (
                       <span className="absolute right-3 top-3 rounded-full bg-black/40 px-2.5 py-1 text-[9px] font-bold uppercase tracking-wider text-white">
                         Illustrative photo
                       </span>
@@ -486,7 +672,7 @@ export default function App() {
                     </div>
 
                     {isRegistered && (
-                      <p className="mt-3 text-xs font-bold text-[#25877f]">
+                      <p className="mt-3 text-xs font-bold text-[#17665f]">
                         You’re registered
                       </p>
                     )}
@@ -540,14 +726,16 @@ export default function App() {
             onClick={() => setSelectedEvent(null)}
           />
           <section
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="event-dialog-title"
+            aria-describedby="event-dialog-description"
             className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[min(92vw,560px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl sm:p-8"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-bold uppercase tracking-widest text-[#25877f]">
+                <p className="text-xs font-bold uppercase tracking-widest text-[#17665f]">
                   {selectedEvent.category} · {selectedEvent.source}
                 </p>
                 <h2
@@ -566,7 +754,7 @@ export default function App() {
               </button>
             </div>
 
-            <div className="mt-6 space-y-4 rounded-2xl bg-[#f7f5ef] p-5 text-sm">
+            <div id="event-dialog-description" className="mt-6 space-y-4 rounded-2xl bg-[#f7f5ef] p-5 text-sm">
               <p>
                 <strong>Date:</strong> {selectedEvent.dateText}
               </p>
@@ -630,12 +818,14 @@ export default function App() {
               className="mt-6 w-full rounded-xl bg-[#142f43] px-4 py-3 font-bold text-white hover:bg-[#25877f]"
             >
               {registeredIds.includes(selectedEvent.id)
-                ? "Cancel demo registration"
+                ? isWordPressConfigured ? "Cancel registration" : "Cancel demo registration"
                 : "Register for this event"}
             </button>
 
             <p className="mt-3 text-center text-xs text-slate-500">
-              Demo registration is saved only in this browser.
+              {isWordPressConfigured
+                ? "Registration is stored in the WordPress database for your signed-in account."
+                : "Demo registration is saved only in this browser."}
             </p>
           </section>
         </>

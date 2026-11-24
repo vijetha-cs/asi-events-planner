@@ -3,11 +3,14 @@ import { useState } from "react";
 const EMPTY_EVENT = {
   title: "",
   category: "Community",
+  description: "",
   date: "",
   time: "",
   location: "",
   accessibilityNotes: "",
   registrationLimit: "",
+  imageUrl: "",
+  imageAlt: "",
 };
 
 function loadRegisteredIds() {
@@ -43,10 +46,14 @@ export default function OrganizerDashboard({
   onSave,
   onDelete,
   onToggleStatus,
+  apiMode = false,
+  canManageEvents = true,
+  loginUrl,
 }) {
   const [form, setForm] = useState(EMPTY_EVENT);
   const [editingId, setEditingId] = useState(null);
   const [registeredIds] = useState(loadRegisteredIds);
+  const [formMessage, setFormMessage] = useState("");
 
   const publishedCount = events.filter(
     (event) => event.status === "published",
@@ -65,11 +72,14 @@ export default function OrganizerDashboard({
     setForm({
       title: event.title || "",
       category: event.category || "Community",
+      description: event.description || "",
       date: event.date || "",
       time: event.time || "",
       location: event.location || "",
       accessibilityNotes: event.accessibilityNotes || "",
       registrationLimit: event.registrationLimit || "",
+      imageUrl: event.imageUrl || "",
+      imageAlt: event.imageAlt || "",
     });
 
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -80,24 +90,37 @@ export default function OrganizerDashboard({
     setForm(EMPTY_EVENT);
   }
 
-  function submitForm(event) {
+  async function submitForm(event) {
     event.preventDefault();
 
     const status = event.nativeEvent.submitter?.value || "published";
     const { dateLabel, dateText } = formatDate(form.date);
+    setFormMessage("");
+    try {
+      await onSave({
+        ...form,
+        id: editingId,
+        dateLabel,
+        dateText,
+        source: apiMode ? "WordPress API" : "Organizer demo",
+        color: "from-sky-700 to-cyan-500",
+        symbol: "✦",
+        status,
+      });
+      clearForm();
+      setFormMessage(status === "draft" ? "Draft saved." : "Event saved.");
+    } catch (error) {
+      setFormMessage(error.message || "Could not save this event.");
+    }
+  }
 
-    onSave({
-      ...form,
-      id: editingId,
-      dateLabel,
-      dateText,
-      source: "Organizer demo",
-      color: "from-sky-700 to-cyan-500",
-      symbol: "✦",
-      status,
-    });
-
-    clearForm();
+  async function runAction(action) {
+    setFormMessage("");
+    try {
+      await action();
+    } catch (error) {
+      setFormMessage(error.message || "That action could not be completed.");
+    }
   }
 
   return (
@@ -105,8 +128,8 @@ export default function OrganizerDashboard({
       <div className="mx-auto max-w-6xl">
         <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#25877f]">
-              Organizer workspace · Demo
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#17665f]">
+              Organizer workspace · {apiMode ? "WordPress" : "Demo"}
             </p>
             <h1 className="mt-2 text-3xl font-black tracking-tight">
               Manage events
@@ -120,6 +143,20 @@ export default function OrganizerDashboard({
           </button>
         </header>
 
+        {formMessage && (
+          <p role="status" aria-live="polite" className="mb-5 rounded-xl bg-[#e4f1eb] p-3 text-sm text-[#17665f]">
+            {formMessage}
+          </p>
+        )}
+
+        {!canManageEvents && (
+          <div className="mb-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 text-sm text-amber-950">
+            <p className="font-bold">Organizer access required</p>
+            <p className="mt-1">Sign in to WordPress with an ASI Event Organizer account. A WordPress administrator can assign that role under Users.</p>
+            {loginUrl && <a className="mt-3 inline-block font-bold underline" href={loginUrl}>Sign in to WordPress</a>}
+          </div>
+        )}
+
         <section
           className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
           aria-label="Event totals"
@@ -128,7 +165,7 @@ export default function OrganizerDashboard({
             ["Published", publishedCount],
             ["Drafts", draftCount],
             ["Total events", events.length],
-            ["Demo registrations on this browser", registeredIds.length],
+            [apiMode ? "Database registrations" : "Demo registrations on this browser", apiMode ? events.reduce((sum, event) => sum + (event.registrationCount || 0), 0) : registeredIds.length],
           ].map(([label, count]) => (
             <div
               key={label}
@@ -141,6 +178,7 @@ export default function OrganizerDashboard({
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+          {canManageEvents && (
           <form
             onSubmit={submitForm}
             className="rounded-3xl border border-[#e5e1d7] bg-white p-6"
@@ -170,6 +208,18 @@ export default function OrganizerDashboard({
                   required
                   className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal outline-none focus:border-[#25877f] focus:ring-4 focus:ring-[#25877f]/10"
                   placeholder="e.g., Beach cleanup meetup"
+                />
+              </label>
+
+              <label className="block text-sm font-semibold">
+                Description
+                <textarea
+                  name="description"
+                  value={form.description}
+                  onChange={updateField}
+                  rows="3"
+                  className="mt-1.5 w-full resize-y rounded-xl border border-slate-300 px-3 py-2.5 font-normal outline-none focus:border-[#25877f] focus:ring-4 focus:ring-[#25877f]/10"
+                  placeholder="What should students know about this event?"
                 />
               </label>
 
@@ -253,6 +303,32 @@ export default function OrganizerDashboard({
                   placeholder="Optional"
                 />
               </label>
+
+              <label className="block text-sm font-semibold">
+                Event image URL (optional)
+                <input
+                  name="imageUrl"
+                  type="url"
+                  value={form.imageUrl}
+                  onChange={updateField}
+                  required={Boolean(form.imageUrl)}
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal outline-none focus:border-[#25877f]"
+                  placeholder="https://example.com/event-photo.jpg"
+                />
+              </label>
+
+              <label className="block text-sm font-semibold">
+                Image description for screen readers
+                <input
+                  name="imageAlt"
+                  value={form.imageAlt}
+                  onChange={updateField}
+                  required={Boolean(form.imageUrl)}
+                  maxLength="180"
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal outline-none focus:border-[#25877f]"
+                  placeholder="Describe the image briefly"
+                />
+              </label>
             </div>
 
             <div className="mt-6 flex flex-wrap gap-3">
@@ -274,6 +350,7 @@ export default function OrganizerDashboard({
               </button>
             </div>
           </form>
+          )}
 
           <section className="rounded-3xl border border-[#e5e1d7] bg-white p-6">
             <h2 className="mb-5 text-xl font-extrabold">Your events</h2>
@@ -301,8 +378,7 @@ export default function OrganizerDashboard({
                             {event.dateText} · {event.location}
                           </p>
                           <p className="mt-2 text-xs text-slate-500">
-                            {registrationCount} demo sign-up
-                            {registrationCount === 1 ? "" : "s"} on this browser
+                            {apiMode ? event.registrationCount || 0 : registrationCount} {apiMode ? "database registration" : "demo sign-up"}{(apiMode ? event.registrationCount || 0 : registrationCount) === 1 ? "" : "s"}{apiMode ? "" : " on this browser"}
                           </p>
                         </div>
                         <span
@@ -316,7 +392,7 @@ export default function OrganizerDashboard({
                         </span>
                       </div>
 
-                      <div className="mt-4 flex flex-wrap gap-2">
+                      {canManageEvents && <div className="mt-4 flex flex-wrap gap-2">
                         <button
                           onClick={() => startEditing(event)}
                           className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold hover:bg-slate-50"
@@ -324,7 +400,7 @@ export default function OrganizerDashboard({
                           Edit
                         </button>
                         <button
-                          onClick={() => onToggleStatus(event.id)}
+                          onClick={() => runAction(() => onToggleStatus(event.id))}
                           className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold hover:bg-slate-50"
                         >
                           {event.status === "published"
@@ -332,12 +408,12 @@ export default function OrganizerDashboard({
                             : "Publish"}
                         </button>
                         <button
-                          onClick={() => onDelete(event.id)}
+                          onClick={() => runAction(() => onDelete(event.id))}
                           className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50"
                         >
                           Delete
                         </button>
-                      </div>
+                      </div>}
                     </li>
                   );
                 })}
@@ -347,8 +423,7 @@ export default function OrganizerDashboard({
         </section>
 
         <p className="mt-6 text-xs text-slate-500">
-          Demo organizer screen. Registration counts are stored in this browser
-          only.
+          {apiMode ? "Events and registrations are stored in the WordPress database when the API is connected." : "Demo organizer screen. Events and registration counts are stored in this browser only."}
         </p>
       </div>
     </main>
