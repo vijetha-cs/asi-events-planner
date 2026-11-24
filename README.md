@@ -2,7 +2,7 @@
 
 A student focused event discovery app inspired by Associated Students, Inc. (ASI) at CSULB. Browse campus events, find details, save events, and try a demo registration flow.
 
-**Live site:** [Open the ASI Events Planner](PASTE-YOUR-VERCEL-URL-HERE)
+**Live site:** [Open the ASI Events Planner](https://asi-events-planner.vercel.app/)
 
 ## Features
 
