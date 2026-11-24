@@ -1,16 +1,34 @@
-# React + Vite
+# ASI Events Planner
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A student focused event discovery app inspired by Associated Students, Inc. (ASI) at CSULB. Browse campus events, find details, save events, and try a demo registration flow.
 
-Currently, two official plugins are available:
+**Live site:** [Open the ASI Events Planner](PASTE-YOUR-VERCEL-URL-HERE)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Features
 
-## React Compiler
+- Browse and search events by title, category, or location
+- Filter events by category and date
+- View event details, including location and accessibility notes
+- Save events and try demo registration
+- Use an organizer dashboard to create, edit, publish, unpublish, and delete events
+- View demo registration counts in the organizer dashboard
+- Responsive layout for desktop and mobile screens
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Tech stack
 
-## Expanding the ESLint configuration
+- React
+- JavaScript, HTML, and CSS
+- Tailwind CSS
+- Vite
+- Browser localStorage for demo data
+- Vercel for deployment
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Run locally
+
+1. Install [Node.js](https://nodejs.org/).
+2. Clone this repository and open its folder in a terminal.
+3. Install dependencies:
+
+   ```bash
+   npm install
+   ```
